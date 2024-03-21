@@ -1,0 +1,5 @@
+{
+  "scripts": {
+    "releaseBuild": "dotnet build --configuration Release"
+  }
+}
