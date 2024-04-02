@@ -61,6 +61,11 @@ namespace SourceDraftGuard
             // バックアップ先のディレクトリ情報を取得
             DirectoryInfo backupDirInfo = new DirectoryInfo(backupDirectory);
 
+            if(backupDirInfo.Exists == false)
+            {
+                return;
+            }   
+
             // バックアップ先の直下のファイル一覧を取得
             FileInfo[] backupFiles = backupDirInfo.GetFiles();
 
