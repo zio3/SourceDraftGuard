@@ -1,0 +1,27 @@
+# デフォルト除外パターン
+# このファイルに記載されたパターンは常に除外されます
+
+# Windows予約デバイス名（誤作成されたファイル）
+nul
+NUL
+
+# ビルド成果物
+[Bb]in/
+[Oo]bj/
+
+# パッケージマネージャー
+node_modules/
+packages/
+
+# IDE/エディタ
+.vs/
+.vscode/
+.idea/
+
+# キャッシュ
+*.cache
+__pycache__/
+
+# ログ
+*.log
+[Ll]ogs/

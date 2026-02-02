@@ -10,17 +10,25 @@ namespace SourceDraftGuard
 {
     internal class BackupService
     {
+        private readonly LogService _log;
 
-        public Backuptarget EnumerateBackuptarget(string rootPath,List<Regex> ignoreRegexes)
+        public BackupService(LogService log)
+        {
+            _log = log;
+        }
+
+        public Backuptarget EnumerateBackuptarget(string rootPath, List<Regex> ignoreRegexes, List<Regex> negateRegexes)
         {
             var backupTarget = new Backuptarget();
-            RecursiveEnumerate(rootPath, backupTarget, ignoreRegexes);
+            RecursiveEnumerate(rootPath, backupTarget, ignoreRegexes, negateRegexes);
             return backupTarget;
         }
 
-        void RecursiveEnumerate(string path, Backuptarget backupTarget, List<Regex> ignoreRegexes)
+        void RecursiveEnumerate(string path, Backuptarget backupTarget, List<Regex> ignoreRegexes, List<Regex> negateRegexes)
         {
-            if (IsIgnored(path + "/", ignoreRegexes))
+            // パス区切りを正規化してチェック（フォルダは末尾に\を付けてマッチ）
+            var normalizedPath = path.Replace("/", "\\");
+            if (IsIgnored(normalizedPath + "\\", ignoreRegexes, negateRegexes))
             {
                 //ignoreFolders.Add(path);
                 return;
@@ -38,68 +46,47 @@ namespace SourceDraftGuard
             {
                 foreach (var file in Directory.GetFiles(path))
                 {
-                    if (!IsIgnored(file, ignoreRegexes))
+                    var normalizedFile = file.Replace("/", "\\");
+                    if (!IsIgnored(normalizedFile, ignoreRegexes, negateRegexes))
                     {
-
                         backupTarget.Files.Add(file);
                     }
-                    //else
-                    //{
-                    //    ignoreFiles.Add(file);
-                    //}
                 }
 
                 foreach (var subDir in Directory.GetDirectories(path))
                 {
-                    RecursiveEnumerate(subDir, backupTarget, ignoreRegexes);
+                    RecursiveEnumerate(subDir, backupTarget, ignoreRegexes, negateRegexes);
                 }
             }
             catch (UnauthorizedAccessException)
             {
                 // アクセス権限がない場合の処理
-                Console.WriteLine($"Access denied: {path}");
+                _log.Log($"Access denied: {path}");
             }
             catch (PathTooLongException)
             {
                 // パスが長すぎる場合の処理
-                Console.WriteLine($"Path too long: {path}");
+                _log.Log($"Path too long: {path}");
             }
         }
 
-        void ProcessFilesAndFolders(List<string> folders, List<string> files)
+        public (List<Regex> ignoreRegexes, List<Regex> negateRegexes) LoadGitignoreRegexes(string gitignoreFile)
         {
-            Console.WriteLine("Folders:");
-            foreach (var folder in folders)
-            {
-                if (Repository.IsValid(folder))
-                {
-                    Console.WriteLine($"[Git] {folder}");
-                }
-                else
-                {
-                    Console.WriteLine($"[Non-Git] {folder}");
-                }
-            }
+            var allPatterns = LoadGitignorePatterns(gitignoreFile);
 
-            Console.WriteLine("\nFiles:");
-            foreach (var file in files)
-            {
-                var folder = Path.GetDirectoryName(file);
-                if (Repository.IsValid(folder))
-                {
-                    Console.WriteLine($"[Git] {file}");
-                }
-                else
-                {
-                    Console.WriteLine($"[Non-Git] {file}");
-                }
-            }
-        }
+            // 否定パターン（!で始まる）と通常パターンを分離
+            var negatePatterns = allPatterns
+                .Where(p => p.StartsWith("!"))
+                .Select(p => p.Substring(1)) // !を除去
+                .Select(pattern => new Regex(WildcardToRegex(pattern), RegexOptions.Compiled))
+                .ToList();
 
-        public List<Regex> LoadGitignoreRegexes(string gitignoreFile)
-        {
-            var ignorePatterns = LoadGitignorePatterns(gitignoreFile);
-            return ignorePatterns.Select(pattern => new Regex(WildcardToRegex(pattern), RegexOptions.Compiled)).ToList();
+            var ignorePatterns = allPatterns
+                .Where(p => !p.StartsWith("!"))
+                .Select(pattern => new Regex(WildcardToRegex(pattern), RegexOptions.Compiled))
+                .ToList();
+
+            return (ignorePatterns, negatePatterns);
         }
 
         List<string> LoadGitignorePatterns(string gitignorePath)
@@ -114,8 +101,18 @@ namespace SourceDraftGuard
             return new List<string>();
         }
 
-        bool IsIgnored(string path, List<Regex> ignoreRegexes)
+        bool IsIgnored(string path, List<Regex> ignoreRegexes, List<Regex> negateRegexes)
         {
+            // まず否定パターンでマッチするか確認（マッチすれば除外しない）
+            foreach (var regex in negateRegexes)
+            {
+                if (regex.IsMatch(path))
+                {
+                    return false;
+                }
+            }
+
+            // 通常の除外パターンでマッチするか確認
             foreach (var regex in ignoreRegexes)
             {
                 if (regex.IsMatch(path))
@@ -130,9 +127,18 @@ namespace SourceDraftGuard
             var escapedPattern = Regex.Escape(pattern)
                 .Replace("\\*", ".*")
                 .Replace("\\?", ".")
-                .Replace("\\[", "[");
+                .Replace("\\[", "[")
+                .Replace("\\]", "]")
+                .Replace("/", "\\\\"); // /を\\に変換
 
-            return "\\\\" + escapedPattern + "$";
+            // パターンが/で終わる場合（ディレクトリ指定）は、その配下全てにマッチ
+            // それ以外は末尾マッチ
+            // .*\\で始めることで、パスの任意の位置でマッチ
+            if (pattern.EndsWith("/"))
+            {
+                return ".*\\\\" + escapedPattern;
+            }
+            return ".*\\\\" + escapedPattern + "$";
         }
     }
 
